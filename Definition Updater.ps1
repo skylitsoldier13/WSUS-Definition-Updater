@@ -1,6 +1,7 @@
-$logFile = "C:\Logs\UpdateJob_$(Get-Date -f yyyyMMdd-HHmmss).txt"
-
-$ProgramBlock = {
+$LogPaths = @{
+    UpdateJobLog = "C:\Logs\UpdateJob_$(Get-Date -f yyyyMMdd-HHmmss).txt"
+    SystemStatusLog = "C:\Logs\SystemStatus_$(Get-Date -f yyyyMMdd-HHmmss).txt"
+}
 
         #-------------------------------------#
         # *~*~*~*~*~ Configuration *~*~*~*~*~ #
@@ -9,15 +10,9 @@ $ProgramBlock = {
 #The WSUS server to be used for hosting the program.
 $WSUS_Server = Get-WsusServer -Name "KTPO-WSUS" -PortNumber 8530
 
-#The path that the logs are saved at.
-$ScriptUpdateLogPath = "C:\Script Logs"
-
 #Pathing for the PSWindowsUpdate module. Copied to systems missing the module.
 $ModuleSource = "\\ktpo-wsus\c$\Update Module\PSWindowsUpdate"
 $ModuleDestination = "C:\Program Files\WindowsPowerShell\Modules"
-
-#Credentials passed along to the Invoke-WU
-#$AdminCredentials = Import-Clixml -Path C:\Users\mike.jurovcik\Desktop\Script\AdminCredentials.xml
 
         #-------------------------------------------#
         # *~*~*~*~*~ Initial Base Arrays *~*~*~*~*~ #
@@ -52,7 +47,7 @@ $SystemsToUpdate = $RawWSUS_List.FullDomainName | Sort-Object -Descending
 #systems are in the blacklist, it removes them from the update list.
 #
 function VerifyBlacklist{
-    param($SystemsToUpdate,$BlackList)
+    param($SystemsToUpdate,$BlackList,$logFile)
     
     $BlackListMatch = @()  #Setting up the needed arrays for this function.
     $SystemsToRemove = @() #
@@ -61,7 +56,7 @@ function VerifyBlacklist{
     $BlackListMatch = $CleanUpdateList | Where-Object {$_ -in $BlackList} #Get an array of all systems that are in the blacklist and update list.
 
     foreach($match in $BlackListMatch){ #Take every system in the BlackListMatch array, announce their presence, and add them to a new array.
-        #Write-Output "$match is a blacklisted system found in the update list. Removing from update list..."
+        Add-Content -Path $logFile -Value "$match is a blacklisted system found in the update list. Removing from update list..."
         $SystemsToRemove += $match
     }
 
@@ -89,25 +84,24 @@ function CleanNames{
 # This function only checks if a system is online and reachable. If the system isn't, we skip it.
 #
 function TestConnection {
-    param ($system)
+    param ($system,$LogPaths)
 
     $CouldConnect = Test-Connection -ComputerName $system -Count 1 -Quiet
 
     if ($CouldConnect){
-        #Continue with the script.
+        return $true
     }  else {
-        #Write-Output "[Error] $system cannot be reached."
-        #Write-Output
-        Continue
+        Add-Content -Path $LogPaths.SystemStatusLog -Value "[Error] $system cannot be reached."
+        Add-Content -Path $LogPaths.SystemStatusLog -Value ""
+        return $false
     }
-
 }
 
 #
 #This function ensures that the WinRM script is running, which is essential for all remote script that involve invoking.
 #
 function TestWinRM {
-    param ($system)
+    param ($system,$logFile)
 
     $WinRM = Get-Service -ComputerName $system -Name WinRM
 
@@ -120,7 +114,7 @@ function TestWinRM {
             $status = (Get-Service -ComputerName $system -Name WinRM).Status    #Get the status on the service again.
         } until ($status -eq 'Running' -or $Timeout -eq 15)                     #Exit if the process is now running, or the loop occured 15 times (15 seconds)
         if ($Timeout -eq 15){ #If the loop did timeout, inform the log and move to the next system.
-            Write-Output "[Error] $system timed out while trying to start WinRM service."
+            Add-Content -Path $logFile -Value "[Error] $system timed out while trying to start WinRM service."
             Continue
         }
         $WinRM = Get-Service -ComputerName $system -Name WinRM #Query the service one last time.
@@ -129,19 +123,17 @@ function TestWinRM {
         }
 
     } else {
-        #Write-Output -ForegroundColor Green "WinRM good."
         #Continue
     }
 }
 
 function TestUpdateModule{
-    param($system)
+    param($system,$logFile)
 
     $ModuleSource = "C:\Update Module\PSWindowsUpdate"
     $ModuleDestination = "\\$system\c$\Program Files\WindowsPowerShell\Modules\PSWindowsUpdate"
 
     if(-not(Test-Path $ModuleDestination)){
-        #Write-Output "Folder not found"
         New-Item -ItemType Dir -Path $ModuleDestination
         Copy-Item $ModuleSource $ModuleDestination -Recurse -Force
 
@@ -151,7 +143,7 @@ function TestUpdateModule{
 
             if(!$PS_Module){
                 $timeout = 0
-                #Write-Output "PSWindowsUpdate module is not installed on target machine. Installing..."
+                Add-Content -Path $logFile -Value "PSWindowsUpdate module is not installed on target machine. Installing..."
                 Start-Sleep -Seconds 2
                 Install-Module PSWindowsUpdate -force -Scope AllUsers
                 do {
@@ -160,7 +152,7 @@ function TestUpdateModule{
                     $timeout++
                 } until ($PS_Module -or $timeout -eq 10)
 
-                if($timeout -eq 10){<#Write-Output "Module import failed."#>}
+                if($timeout -eq 10){Add-Content -Path $logFile -Value "[Error] Module import failed."}
 
             } else {}
         } 
@@ -171,59 +163,65 @@ function TestUpdateModule{
 #This is the main function that actually runs and controls the update processes.
 #
 function RunUpdates {
-    param($system,$FirewallFix,$ScriptUpdateLogPath)
+    param($system,$FirewallFix,$logFile)
 
-    #$AdminCredentials = Import-Clixml -Path C:\Users\mike.jurovcik\Desktop\Script\AdminCredentials.xml
     $AdminCredentials = Import-Clixml -Path "C:\Scripts\RemoteCreds.xml"
 
-    #try{ #Try to invoke the command to run the update and reporting scripts.
-        Invoke-Command -ComputerName $system -Credential $AdminCredentials -ScriptBlock {
+    try{ #Try to invoke the command to run the update and reporting scripts.
+        $VersionData = Invoke-Command -ComputerName $system -Credential $AdminCredentials -ScriptBlock {
             
-            wuauclt /resetauthorization /detectnow
-            wuauclt /reportnow
+            #wuauclt /resetauthorization /detectnow
+            #wuauclt /reportnow
 
-            $CurrentVersion = (Get-MpComputerStatus).AntivirusSignatureVersion #This is the current version of defender signatures.
-            #Write-Output "Current Signature Version: $CurrentVersion"
+            $OldVersion = (Get-MpComputerStatus).AntivirusSignatureVersion #This is the current version of defender signatures.
+            
 
             & "$env:ProgramFiles\Windows Defender\MpCmdRun.exe" -removedefinitions -dynamicsignatures *>$null
             & "$env:ProgramFiles\Windows Defender\MpCmdRun.exe" -SignatureUpdate *>$null
             $NewVersion = (Get-MpComputerStatus).AntivirusSignatureVersion
 
-            #Write-Output "Signature version after update: $NewVersion"
-            continue
+            [PSCustomObject]@{
+                NewVersion = $NewVersion
+                OldVersion = $OldVersion
+            }
+        }
 
-        } #-ErrorAction Stop
-    #} catch {
+        Add-Content -Path $logFile -Value "Old Signature Version: $($VersionData.OldVersion)"
+        Add-Content -Path $logFile -Value "New Signature Version: $($VersionData.NewVersion)"
+    } catch {
         if (-not $FirewallFix){
-            #Write-Output "[Attention] Could ping the system but invoke failed. Verifying domain firewall..."
+            Add-Content -Path $logFile -Value "[Attention] Could ping the system but invoke failed. Verifying domain firewall..."
             $FixSuccess = FixFirewall -system $system
 
             if($FixSuccess){
                 RunUpdates -system $system -FirewallFix $true
             } else {
-                #Write-Output "[Error] Update retry failed. Moving to next system."
+                Add-Content -Path $logFile -Value "[Error] Update retry failed. Moving to next system."
                 Continue
             }
         }
-   # }
+    }
 
     Set-Item WSMan:\localhost\Client\TrustedHosts -value "$system" -force -concatenate
 
-    Invoke-WUJob -ComputerName $system -Credential $AdminCredentials -Script {
-        #Write-Output "Hi im $env:computername"
-        #Write-Output "$updates"
-        Install-WindowsUpdate -ComputerName $env:computername -AcceptAll -ForceDownload -ForceInstall -IgnoreReboot -Verbose *>> "$ScriptUpdateLogPath\Update.txt"
+    $updateJob = Invoke-WUJob -ComputerName $system -Credential $AdminCredentials -Script {
+        Install-WindowsUpdate -ComputerName $env:computername -AcceptAll -ForceDownload -ForceInstall -IgnoreReboot -Verbose
         Get-WUJob -ComputerName $env:computername -TaskName PSWindowsUpdate
-        Get-WindowsUpdateLog -LogPath "C:\Windows" -Verbose
     } -RunNow -Confirm:$false
+
+    $updateJobStatus = $updateJob.JobDetails.Progress
+    $Updatesfound = $updateJobStatus.TotalUpdates
+
+    Add-Content -Path $logFile -Value "Total Updates Found: $UpdatesFound"
+
     wuauclt /resetauthorization /detectnow
     wuauclt /reportnow
-    #Write-Output "-------------------------------------------"
-    #Write-Output
+    Add-Content -Path $logFile -Value "-------------------------------------------"
+    Add-Content -Path $logFile -Value ""
 }
 
 function FixFirewall {
-    param ($system)
+    param ($system,$logFile)
     
     try{
         psexec \\$system cmd /c "netsh firewall set opmode disable" *>$null
@@ -231,20 +229,20 @@ function FixFirewall {
         try {
 
             Invoke-Command -ComputerName $system -ScriptBlock {
-                #Write-Output "Firewall disable succeeded. Invoking is now successful."
+                Add-Content -Path $logFile -Value "Firewall disable succeeded. Invoking is now successful."
                 return $true
             } -ErrorAction Stop
         }
         catch {
-            #Write-Output "[Error] Firewall disable ran, but still unable to Invoke. Stopping on this system..."
-            #Write-Output
+            Add-Content -Path $logFile -Value "[Error] Firewall disable ran, but still unable to Invoke. Stopping on this system..."
+            Add-Content -Path $logFile -Value ""
             Continue
         }
-        #Write-Output "Domain firewall disable complete. Retrying update..."
+        Add-Content -Path $logFile -Value "Domain firewall disable complete. Retrying update..."
         
     }
     catch{
-        #Write-Output "[Error] Firewall disable failed..."
+        Add-Content -Path $logFile -Value "[Error] Firewall disable failed..."
         return $false
     }
 }
@@ -254,18 +252,12 @@ $FilteredSystemsToUpdate = VerifyBlacklist -SystemsToUpdate $SystemsToUpdate -Bl
 foreach($system In $FilteredSystemsToUpdate){
     $ModuleDestination = "\\$system\c$\Program Files\WindowsPowerShell\Modules"
     $FirewallFix = $false
-    #Write-Output
-    #Write-Output "-------------------------------------------"
-    #Write-Output "    >Starting on $system<" 
+    Add-Content -Path $logFile -Value ""
+    Add-Content -Path $logFile -Value "-------------------------------------------"
+    Add-Content -Path $logFile -Value "    >Starting on $system<"
 
-    TestConnection -system $system
-    TestWinRM -system $system
-    TestUpdateModule -system $system
-    RunUpdates -system $system -FirewallFix $FirewallFix -ScriptUpdateLogPath $ScriptUpdateLogPath
+    TestConnection -system $system -logFile $logFile
+    TestWinRM -system $system -logFile $logFile
+    TestUpdateModule -system $system -logFile $logFile
+    RunUpdates -system $system -FirewallFix $FirewallFix -logFile $logFile
 }
-}
-
-& $ProgramBlock *>> $logfile
-
-Out-File $logFile
-
