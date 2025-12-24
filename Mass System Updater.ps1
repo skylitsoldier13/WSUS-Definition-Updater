@@ -141,9 +141,12 @@ function TestWinRM {
             return $true
         }
 
-    } else {
+    } elseif($WinRM.Status -eq 'Running') {
         Add-Content -Path $LogPaths.SystemStatusLog -Value "WinRM Running"
         return $true
+    } else {
+        Add-Content -Path $LogPaths.SystemStatusLog -Value "Issue Connecting to WinRM"
+        return $false
     }
 }
 
