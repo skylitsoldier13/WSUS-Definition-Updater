@@ -122,9 +122,19 @@ function TestConnection {
 function TestWinRM {
     param ($system,$LogPaths)
 
-    $WinRM = Get-Service -ComputerName $system -Name WinRM
+    try {
+        $WinRM = Get-Service -ComputerName $system -Name WinRM -ErrorAction Stop
+    }
+    catch {
+        Add-Content -Path $LogPaths.SystemStatusLog -Value "[Error] $(GetNow) : Failed accessing WinRM. Skipping system."
+        Add-Content -Path $LogPaths.SystemStatusLog -Value ""
+        continue
+    }
+    
+    
 
     if($WinRM.Status -eq 'Stopped'){
+        Add-Content -Path $LogPaths.SystemStatusLog -Value "$(GetNow) : WinRM Stopped. Attempting to start"
         $Timeout = 0 #imeout variable to ensure the do until loop doesnt go on forever.
 
         do {
