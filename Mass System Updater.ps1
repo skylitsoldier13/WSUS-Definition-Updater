@@ -64,6 +64,9 @@ $SystemList2 = $SystemList1.FullDomainName | Sort-Object -Descending
 #This function controls the blacklist. This takes the systems list pulled from WSUS and compares it to the blacklist systems. If any
 #systems are in the blacklist, it removes them from the update list.
 #
+function GetNow{
+    return get-date -f "yyyy.MM.dd hh:mm:ss"
+}
 function VerifyBlacklist{
     param($SystemList2,$BlackList,$LogPaths)
     
@@ -74,7 +77,7 @@ function VerifyBlacklist{
     $BlackListMatch = $SystemList3 | Where-Object {$_ -in $BlackList} #Get an array of all systems that are in the blacklist and update list.
 
     foreach($match in $BlackListMatch){ #Take every system in the BlackListMatch array, announce their presence, and add them to a new array.
-        Add-Content -Path $LogPaths.SystemStatusLog -Value "$match is a blacklisted system found in the update list. Removing from update list..."
+        Add-Content -Path $LogPaths.SystemStatusLog -Value "$(GetNow) : $match is a blacklisted system found in the update list. Removing from update list..."
         $SystemsToRemove += $match
     }
 
@@ -104,10 +107,10 @@ function TestConnection {
     $CouldConnect = Test-Connection -ComputerName $system -Count 1 -Quiet
 
     if ($CouldConnect){
-        Add-Content -Path $LogPaths.SystemStatusLog -Value "Good connection"
+        Add-Content -Path $LogPaths.SystemStatusLog -Value "$(GetNow) : Good connection"
         return $true
     }  else {
-        Add-Content -Path $LogPaths.SystemStatusLog -Value "[Warning] $system cannot be reached."
+        Add-Content -Path $LogPaths.SystemStatusLog -Value "[Warning] $(GetNow) : $system cannot be reached."
         Add-Content -Path $LogPaths.SystemStatusLog -Value ""
         return $false
     }
@@ -131,21 +134,21 @@ function TestWinRM {
             $status = (Get-Service -ComputerName $system -Name WinRM).Status    #Get the status on the service again.
         } until ($status -eq 'Running' -or $Timeout -eq 15)                     #Exit if the process is now running, or the loop occured 15 times (15 seconds)
         if ($Timeout -eq 15){ #If the loop did timeout, inform the log and move to the next system.
-            Add-Content -Path $LogPaths.SystemStatusLog -Value "[Error] $system timed out while trying to start WinRM service."
+            Add-Content -Path $LogPaths.SystemStatusLog -Value "[Error] $(GetNow) : $system timed out while trying to start WinRM service."
             return $false
         }
         $WinRM = Get-Service -ComputerName $system -Name WinRM #Query the service one last time.
 
         if($WinRM.Status -eq 'Running'){
-            Add-Content -Path $LogPaths.SystemStatusLog -Value "WinRM Running"
+            Add-Content -Path $LogPaths.SystemStatusLog -Value "$(GetNow) : WinRM Running"
             return $true
         }
 
     } elseif($WinRM.Status -eq 'Running') {
-        Add-Content -Path $LogPaths.SystemStatusLog -Value "WinRM Running"
+        Add-Content -Path $LogPaths.SystemStatusLog -Value "$(GetNow) : WinRM Running"
         return $true
     } else {
-        Add-Content -Path $LogPaths.SystemStatusLog -Value "Issue Connecting to WinRM"
+        Add-Content -Path $LogPaths.SystemStatusLog -Value "$(GetNow) : Issue Connecting to WinRM"
         return $false
     }
 }
@@ -166,7 +169,7 @@ function TestUpdateModule{
 
             if(!$PS_Module){
                 $timeout = 0
-                Add-Content -Path $LogPaths.SystemStatusLog -Value "PSWindowsUpdate module is not installed on $system. Installing..."
+                Add-Content -Path $LogPaths.SystemStatusLog -Value "$(GetNow) : PSWindowsUpdate module is not installed on $system. Installing..."
                 Start-Sleep -Seconds 2
                 Install-Module PSWindowsUpdate -force -Scope AllUsers
                 do {
@@ -176,20 +179,20 @@ function TestUpdateModule{
                 } until ($PS_Module -or $timeout -eq 10)
 
                 if($timeout -eq 10){
-                    Add-Content -Path $LogPaths.SystemStatusLog -Value "[Error] Module import failed on $system."
+                    Add-Content -Path $LogPaths.SystemStatusLog -Value "[Error] $(GetNow) : Module import failed on $system."
                     return $false
                 } else {
-                    Add-Content -Path $LogPaths.SystemStatusLog -Value "PSWindowsUpdate module is good."
+                    Add-Content -Path $LogPaths.SystemStatusLog -Value "$(GetNow) : PSWindowsUpdate module is good."
                     return $true
                 }
 
             } else {
-                Add-Content -Path $LogPaths.SystemStatusLog -Value "PSWindowsUpdate module is good."
+                Add-Content -Path $LogPaths.SystemStatusLog -Value "$(GetNow) : PSWindowsUpdate module is good."
                 return $true
             }
         } 
     } else {
-        Add-Content -Path $LogPaths.SystemStatusLog -Value "PSWindowsUpdate module is good."
+        Add-Content -Path $LogPaths.SystemStatusLog -Value "$(GetNow) : PSWindowsUpdate module is good."
         return $true
     }    
 }
@@ -220,7 +223,7 @@ function Wait-ForRemoteTaskCompletion {
     do {
         # Check for timeout
         if ((New-TimeSpan -Start $StartTime).TotalMinutes -ge $TimeoutMinutes) {
-            Add-Content -Path $LogPaths.UpdateJobLog -Value "Task monitoring timed out after $TimeoutMinutes minutes on $System."
+            Add-Content -Path $LogPaths.UpdateJobLog -Value "$(GetNow) : Task monitoring timed out after $TimeoutMinutes minutes on $System."
             break # Exit the loop
         }
         
@@ -253,7 +256,7 @@ function Wait-ForRemoteTaskCompletion {
 
         }
         catch {
-            Add-Content -Path $LogPaths.UpdateJobLog -Value "Error querying task status on $System"
+            Add-Content -Path $LogPaths.UpdateJobLog -Value "[Error] $(GetNow) : Issue querying task status on $System"
             $TaskStillRunning = $false # Treat a hard error as a reason to stop waiting
         }
 
@@ -267,7 +270,7 @@ $FinalSystemList = VerifyBlacklist -SystemList2 $SystemList2 -BlackList $BlackLi
 
 foreach($system In $FinalSystemList){
 
-    Add-Content -Path $LogPaths.SystemStatusLog -Value "---Beginning system checks on $system---"
+    Add-Content -Path $LogPaths.SystemStatusLog -Value "$(GetNow) : ---Beginning system checks on $system---"
 
     $ConnectionStatus = TestConnection -system $system -LogPaths $LogPaths
     if($ConnectionStatus -eq $false){Continue}
@@ -276,7 +279,7 @@ foreach($system In $FinalSystemList){
     $InstalledModule = TestUpdateModule -system $system -LogPaths $LogPaths
     if ($InstalledModule -eq $false){Continue}
 
-    Add-Content -Path $LogPaths.SystemStatusLog -Value "Beginning update process on $system..."
+    Add-Content -Path $LogPaths.SystemStatusLog -Value "$(GetNow) : Beginning update process on $system..."
     Add-Content -Path $LogPaths.SystemStatusLog -Value ""
     Add-Content -Path $LogPaths.SystemStatusLog -Value ""
 
