@@ -45,28 +45,39 @@ $AllUpdateJobs = @()
 
 $AdminCredentials = Import-Clixml -Path "C:\Scripts\RemoteCreds.xml"
 
+$OptionsDataLocation = "C:\ProgramData\Mass System Updater Options\Data"
+$GroupsDataPath = "$OptionsDataLocation\SystemGroupList.json"
+$BlackListDataPath = "$OptionsDataLocation\Blacklist.json"
 
 
-    #-------------------------------------------#
-    # *~*~*~*~*~ Initial Base Arrays *~*~*~*~*~ #
-    #-------------------------------------------#
 
-#The list of Computer Groups from WSUS to pull the system list from. Groups not used are commented out.
-$TargetSystemGroups = @("Department Systems","Hilo Tablets","Info Screens","Kiosk Systems","PWS",
-    "QVS","Surfaces","Team Lead",
-    "Vista"
-    #"Server No Updates","Servers","Not Approved"
-)
+    #-----------------------------------------------------------#
+    # *~*~*~*~*~ Load group selections and Blacklist *~*~*~*~*~ #
+    #-----------------------------------------------------------#
 
-#A list of systems to never run the program on to be used in the VerifyBlackList function.
-$BlackList = @(
-    "KTPO-MQC1","KTPO-MQC2","KTPO-MQC","KTPO-MQCA","KTPO-JBOSS-PRD","KTPO-JBOSS-PRD1","KTPO-JBOSS-PRD2","KTPO-SOS-PRD","KTPO-SOS-PRD1","KTPO-SOS-PRD2","KTPO-SOS-PRD3",
-    "KTPO-PDS1","KTPO-PDS2","KTPO-PDSC","PDSSQL1","KTPO-ERP-PRD","KTPO-TRANS-PRD","KTPO-HIST-PRD","KTPO-DIREC-PRD","KTPO-VWSE-PRD","KTPO-VWPT-PRD","KTPO-VTPT-PRD",
-    "KTPO-JBOSS-QUAL","KTPO-JBOSS-Q2","KTPO-SOS-QUAL","KTPO-SOS-QUAL1","KTPO-SOS-QUAL2","KTPO-SOS-QUAL3","KTPO-QUAL-DB","KTPO-QUAL-DB1","KTPO-QUAL-DBC","QTYSQL1",
-    "KTPO-ERP-QUAL","KTPO-TRANS-QUAL","KTPO-HIST-QUAL","KTPO-DIREC-QUAL","KTPO-VWSE-QUAL","KTPO-VWPT-QUAL","KTPO-VTPT-QUAL"
-)
+$TargetSystemGroups = @()
+$BlackList = @()
 
+if(Test-Path $GroupsDataPath){
+    $LoadedGroupData = Get-Content -Raw $GroupsDataPath | ConvertFrom-Json
 
+    foreach($item in $LoadedGroupData){
+        $TargetSystemGroups += $item
+    }
+} else {
+    Add-Content -Path $LogPaths.SystemStatusLog -Value "[Error] $(GetNow) : No group selection save info found. Killing script."
+    Exit
+}
+
+if(Test-Path $BlackListDataPath){
+    $LoadedBlacklist = Get-Content -Raw $BlackListDataPath | ConvertFrom-Json
+
+    foreach($item in $LoadedBlacklist){
+        $BlackList += $item
+    }
+} else {
+    Add-Content -Path $LogPaths.SystemStatusLog -Value "[Error] $(GetNow) : No blacklist save info found. Killing script."
+}
 
     #-----------------------------------------------#
     # *~*~*~*~*~ Initial List Generation *~*~*~*~*~ #
@@ -98,7 +109,8 @@ function VerifyBlacklist{
     $BlackListMatch = $SystemList3 | Where-Object {$_ -in $BlackList} #Get an array of all systems that are in the blacklist and update list.
 
     foreach($match in $BlackListMatch){ #Take every system in the BlackListMatch array, announce their presence, and add them to a new array.
-        Add-Content -Path $LogPaths.SystemStatusLog -Value "$(GetNow) : $match is a blacklisted system found in the update list. Removing from update list..."
+        Add-Content -Path $LogPaths.SystemStatusLog -Value "[Warning] $(GetNow) : $match is a blacklisted system found in the update list. Removing from update list..."
+        Add-Content -Path $LogPaths.SystemStatusLog -Value ""
         $SystemsToRemove += $match
     }
 
