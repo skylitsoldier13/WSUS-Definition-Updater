@@ -9,25 +9,25 @@ $Month = (Get-Date -f MMMM)
 $LogBase = "C:\Logs"
 
 if(-not(Test-Path "$LogBase\$Year")){
-    New-Item -ItemType Directory -Path "$LogBase\$Year" -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Path "$LogBase\$Year" | Out-Null
 }
 
 if(-not(Test-Path "$LogBase\$Year\$Month")){
-    New-Item -ItemType Directory -Path "$LogBase\$Year\$Month" -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Path "$LogBase\$Year\$Month" | Out-Null
 }
 
-if(-not(Test-Path "$LogBase\$Year\$MonthWord\$SplitDate")){
-    New-Item -ItemType Directory -Path "$LogBase\$Year\$Month\$SplitDate" -ErrorAction SilentlyContinue
+if(-not(Test-Path "$LogBase\$Year\$Month\$SplitDate")){
+    New-Item -ItemType Directory -Path "$LogBase\$Year\$Month\$SplitDate" | Out-Null
     $LogLocation = "$LogBase\$Year\$Month\$SplitDate\"
 } else {
     $LogLocation = "$LogBase\$Year\$Month\$SplitDate\"
 }
 
-$MyLog = New-Item -ItemType Directory -Path "$LogLocation\$RunDate"
+New-Item -ItemType Directory -Path "$LogLocation\$RunDate" | Out-Null
 
 $LogPaths = @{
-    UpdateJobLog = "$MyLog\UpdateJob.txt"
-    SystemStatusLog = "$MyLog\SystemStatus.txt"
+    UpdateJobLog = "$LogLocation\$RunDate\UpdateJob.txt"
+    SystemStatusLog = "$LogLocation\$RunDate\SystemStatus.txt"
 }
 
     #-------------------------------------#
