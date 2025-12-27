@@ -1,13 +1,34 @@
-$RunDate = (Get-Date -f yyyyMMdd-HHmmss)
-$FolderName = "Update Job $RunDate"
-$FolderLocation = New-Item -ItemType Directory -Path "C:\Logs" -Name $FolderName | Out-Null
-$FolderLocation
+    #-----------------------------------------#
+    # *~*~*~*~*~ Determine Logging *~*~*~*~*~ #
+    #-----------------------------------------#
 
-$LogPaths = @{
-    UpdateJobLog = "C:\Logs\$FolderName\UpdateJob.txt"
-    SystemStatusLog = "C:\Logs\$FolderName\SystemStatus.txt"
+$RunDate = (Get-Date -f yyyy.MM.dd-HHmmss)
+$SplitDate =  (Get-Date -f yyyy.MM.dd)
+$Year = ($SplitDate -split '\.' )[0]
+$Month = (Get-Date -f MMMM)
+$LogBase = "C:\Logs"
+
+if(-not(Test-Path "$LogBase\$Year")){
+    New-Item -ItemType Directory -Path "$LogBase\$Year" -ErrorAction SilentlyContinue
 }
 
+if(-not(Test-Path "$LogBase\$Year\$Month")){
+    New-Item -ItemType Directory -Path "$LogBase\$Year\$Month" -ErrorAction SilentlyContinue
+}
+
+if(-not(Test-Path "$LogBase\$Year\$MonthWord\$SplitDate")){
+    New-Item -ItemType Directory -Path "$LogBase\$Year\$Month\$SplitDate" -ErrorAction SilentlyContinue
+    $LogLocation = "$LogBase\$Year\$Month\$SplitDate\"
+} else {
+    $LogLocation = "$LogBase\$Year\$Month\$SplitDate\"
+}
+
+$MyLog = New-Item -ItemType Directory -Path "$LogLocation\$RunDate"
+
+$LogPaths = @{
+    UpdateJobLog = "$MyLog\UpdateJob.txt"
+    SystemStatusLog = "$MyLog\SystemStatus.txt"
+}
 
     #-------------------------------------#
     # *~*~*~*~*~ Configuration *~*~*~*~*~ #
@@ -377,12 +398,3 @@ foreach ($Job in $AllUpdateJobs){
 }
 
 Add-Content -Path $LogPaths.UpdateJobLog -Value "Update process completed"
-
-
-
-
-
-
-
-
-
