@@ -240,75 +240,6 @@ function TestUpdateModule{
     }    
 }
 
-
-function Wait-ForRemoteTaskCompletion {
-    param(
-        [Parameter(Mandatory=$true)]
-        [string]$System,
-
-        [Parameter(Mandatory=$true)]
-        [string]$TaskName,
-
-        [Parameter(Mandatory=$true)]
-        [System.Management.Automation.PSCredential]$Credential,
-
-        [int]$WaitSeconds = 10,
-        [int]$TimeoutMinutes = 60, # Set a maximum timeout to prevent infinite looping
-
-        $LogPaths
-    )
-
-    $StartTime = Get-Date
-    $TaskStillRunning = $true
-    
-    #Add-Content -Path $LogPaths.UpdateJobLog -Value "Monitoring remote task '$TaskName' on $System..."
-
-    do {
-        # Check for timeout
-        if ((New-TimeSpan -Start $StartTime).TotalMinutes -ge $TimeoutMinutes) {
-            Add-Content -Path $LogPaths.UpdateJobLog -Value "$(GetNow) : Task monitoring timed out after $TimeoutMinutes minutes on $System."
-            break # Exit the loop
-        }
-        
-        # 1. Invoke-Command to check the scheduled task status
-        try {
-            # Use Get-ScheduledTask as it is more reliable than Get-WUJob for existence check
-            $TaskStatus = Invoke-Command -ComputerName $System -Credential $Credential -ScriptBlock {
-                # Check for the task object's existence and state
-                $Task = Get-ScheduledTask -TaskName $using:TaskName -ErrorAction SilentlyContinue
-                
-                if ($null -eq $Task) {
-                    # Task is gone (completed and cleaned up)
-                    return "GONE" 
-                } elseif ($Task.State -eq 'Running') {
-                    return "RUNNING"
-                } else {
-                    # Task is in 'Ready', 'Disabled', 'Queued', etc. (Consider it done working)
-                    return "FINISHED"
-                }
-            } -ErrorAction Stop
-            
-            # 2. Evaluate the result from the remote machine
-            if ($TaskStatus -ne "RUNNING") {
-                $TaskStillRunning = $false
-                #Add-Content -Path $LogPaths.UpdateJobLog -Value "Task status resolved: $TaskStatus"
-            } else {
-                #Add-Content -Path $LogPaths.UpdateJobLog -Value "Task is still running. Waiting $WaitSeconds seconds..."
-                Start-Sleep -Seconds $WaitSeconds
-            }
-
-        }
-        catch {
-            Add-Content -Path $LogPaths.UpdateJobLog -Value "[Error] $(GetNow) : Issue querying task status on $System"
-            $TaskStillRunning = $false # Treat a hard error as a reason to stop waiting
-        }
-
-    } while ($TaskStillRunning)
-    
-    #Add-Content -Path $LogPaths.UpdateJobLog -Value "Monitoring complete for $System."
-
-}
-
 $FinalSystemList = VerifyBlacklist -SystemList2 $SystemList2 -BlackList $BlackList -LogPaths $LogPaths
 
 foreach($system In $FinalSystemList){
@@ -373,11 +304,23 @@ Add-Content -Path $LogPaths.UpdateJobLog -Value "[$(Get-Date -f yyyyMMdd-HHmmss)
 Add-Content -Path $LogPaths.UpdateJobLog -Value "Monitoring update jobs..."
 Add-Content -Path $LogPaths.UpdateJobLog -Value ""
 
+$JobTimeout = 0
 do {
+    $JobTimeout++
     $RunningJobs = ($AllUpdateJobs | Where-Object {$_.State -eq 'Running'}).count
-    Add-Content -Path $LogPaths.UpdateJobLog -Value ("[$(Get-Date -f yyyyMMdd-HHmmss)] {0} jobs remaining" -f $RunningJobs)
+    Add-Content -Path $LogPaths.UpdateJobLog -Value ("[$(Get-Date -f yyyyMMdd-HHmmss)] {0} jobs remaining" -f $RunningJobs)   
     Start-Sleep -Seconds 30
-} while ($RunningJobs -gt 0)
+} while ($RunningJobs -gt 0 -and $JobTimeout -le 30)
+
+if($JobTimeout -ge 30){
+    $StuckJobs = ($AllUpdateJobs | Where-Object {$_.State -eq 'Running'})
+    foreach($job in $StuckJobs){
+        $JobInfo = Receive-Job -Job $job -ErrorAction SilentlyContinue
+        $SystemName = $JobInfo.SystemName
+        Add-Content -Path $LogPaths.UpdateJobLog -Value "Stuck Job: $SystemName"
+    }
+
+}
 
 Add-Content -Path $LogPaths.UpdateJobLog -Value ""
 Add-Content -Path $LogPaths.UpdateJobLog -Value "Completed all update jobs. Printing results..."
@@ -388,11 +331,11 @@ foreach ($Job in $AllUpdateJobs){
     $Results = Receive-Job -Job $Job -ErrorAction SilentlyContinue
     $TaskName = $Results.WUTaskName
     $PreUpdateCount = $Results.PreUpdateCount
+    if($null -eq $PreUpdateCount){$PreUpdateCount = "ERROR: Update timeout"}
     $PostUpdateCount = $Results.PostUpdateCount
+    if($null -eq $PostUpdateCount){$PostUpdateCount = "ERROR: Update timeout"}
     $PendingReboot = $Results.PendingReboot
-    
-
-    Wait-ForRemoteTaskCompletion -System $system -TaskName $TaskName -Credential $AdminCredentials -LogPaths $LogPaths
+    if($null -eq $PendingReboot){$PendingReboot = "ERROR: Update timeout"}
 
     Add-Content -Path $LogPaths.UpdateJobLog -Value "-------------------------------------------"
     Add-Content -Path $LogPaths.UpdateJobLog -Value "Final Results for $JobName"
