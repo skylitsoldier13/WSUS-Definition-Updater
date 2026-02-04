@@ -49,7 +49,12 @@ $OptionsDataLocation = "C:\ProgramData\Mass System Updater Options\Data"
 $GroupsDataPath = "$OptionsDataLocation\SystemGroupList.json"
 $BlackListDataPath = "$OptionsDataLocation\Blacklist.json"
 
-
+$currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+if ($currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Add-Content -Path $LogPaths.SystemStatusLog -Value "Running as an Admin"
+} else {
+    Add-Content -Path $LogPaths.SystemStatusLog -Value "Running as a normal user"
+}
 
     #-----------------------------------------------------------#
     # *~*~*~*~*~ Load group selections and Blacklist *~*~*~*~*~ #
@@ -264,7 +269,7 @@ foreach($system In $FinalSystemList){
         param($LocalTaskName)
 
         $WUTaskNameFromLocal = $LocalTaskName
-
+        get-wu
         $PreUpdateList = Get-WindowsUpdate
         $PreUpdateCount = $PreUpdateList.count
 
@@ -277,24 +282,11 @@ foreach($system In $FinalSystemList){
         $PostUpdateList = Get-WindowsUpdate
         $PostUpdateCount = $PostUpdateList.count
 
-        $RebootVariables = @()
-        foreach ($path in $PathList){  
-            $KeyExists = Test-Path -Path $path
-            $RebootVariables += $KeyExists
-        }
-
-        $SessionManager = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager"
-        $PendingRenameValue = Get-ItemProperty -Path $SessionManager -Name 'PendingFileRenameOperations' -ErrorAction SilentlyContinue
-        $RenamePending = ($null -ne $PendingRenameValue.PendingFileRenameOperations)
-        $NeedsReboot += $RenamePending
-        $PendingReboot = $NeedsReboot -contains $true
-
         [PSCustomObject]@{
             SystemName = $env:computername
             WUTaskName = $WUTaskNameFromLocal
             PreUpdateCount = $PreUpdateCount
             PostUpdateCount = $PostUpdateCount
-            PendingReboot = $PendingReboot
         }
     } -ArgumentList $LocalTaskName -AsJob -JobName "UT - $system"
     $AllUpdateJobs += $Job
@@ -334,9 +326,20 @@ foreach ($Job in $AllUpdateJobs){
     if($null -eq $PreUpdateCount){$PreUpdateCount = "ERROR: Update timeout"}
     $PostUpdateCount = $Results.PostUpdateCount
     if($null -eq $PostUpdateCount){$PostUpdateCount = "ERROR: Update timeout"}
-    $PendingReboot = $Results.PendingReboot
-    if($null -eq $PendingReboot){$PendingReboot = "ERROR: Update timeout"}
 
+#WU-Reboot handler.
+    $RebootName = $Results.SystemName
+    $RR_Service = Get-Service -ComputerName $RebootName -Name RemoteRegistry
+    if ($RR_Service.Status -ne 'Running'){
+        sc.exe \\$RebootName config RemoteRegistry start= auto | Out-Null
+        sc.exe \\$RebootName start RemoteRegistry | Out-Null
+    }
+    $RebootCheck = Get-WURebootStatus -ComputerName $RebootName -Silent
+    if ($RebootCheck -match "True"){$PendingReboot = "True"}
+    elseif ($RebootCheck -match "False"){$PendingReboot = "False"}
+    else{$PendingReboot = "Error"}
+
+#Generate result reports.
     Add-Content -Path $LogPaths.UpdateJobLog -Value "-------------------------------------------"
     Add-Content -Path $LogPaths.UpdateJobLog -Value "Final Results for $JobName"
     Add-Content -Path $LogPaths.UpdateJobLog -Value "Initial approved updates found: $PreUpdateCount"
