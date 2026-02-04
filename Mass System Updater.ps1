@@ -28,6 +28,7 @@ New-Item -ItemType Directory -Path "$LogLocation\$RunDate" | Out-Null
 $LogPaths = @{
     UpdateJobLog = "$LogLocation\$RunDate\UpdateJob.txt"
     SystemStatusLog = "$LogLocation\$RunDate\SystemStatus.txt"
+    RebootListLog = "$LogLocation\$RunDate\RebootList.txt"
 }
 
     #-------------------------------------#
@@ -335,7 +336,10 @@ foreach ($Job in $AllUpdateJobs){
         sc.exe \\$RebootName start RemoteRegistry | Out-Null
     }
     $RebootCheck = Get-WURebootStatus -ComputerName $RebootName -Silent
-    if ($RebootCheck -match "True"){$PendingReboot = "True"}
+    if ($RebootCheck -match "True"){
+        $PendingReboot = "True"
+        Add-Content -Path $LogPaths.RebootListLog -Value "$RebootName"
+    }
     elseif ($RebootCheck -match "False"){$PendingReboot = "False"}
     else{$PendingReboot = "Error"}
 
