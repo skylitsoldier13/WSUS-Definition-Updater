@@ -29,6 +29,7 @@ $LogPaths = @{
     UpdateJobLog = "$LogLocation\$RunDate\UpdateJob.txt"
     SystemStatusLog = "$LogLocation\$RunDate\SystemStatus.txt"
     RebootListLog = "$LogLocation\$RunDate\RebootList.txt"
+    SavedRebootFile = "C:\Mass System Updater Data\RebootList.json"
 }
 
     #-------------------------------------#
@@ -63,6 +64,7 @@ if ($currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administ
 
 $TargetSystemGroups = @()
 $BlackList = @()
+$SystemsToReboot = @()
 
 if(Test-Path $GroupsDataPath){
     $LoadedGroupData = Get-Content -Raw $GroupsDataPath | ConvertFrom-Json
@@ -270,7 +272,6 @@ foreach($system In $FinalSystemList){
         param($LocalTaskName)
 
         $WUTaskNameFromLocal = $LocalTaskName
-        get-wu
         $PreUpdateList = Get-WindowsUpdate
         $PreUpdateCount = $PreUpdateList.count
 
@@ -330,18 +331,24 @@ foreach ($Job in $AllUpdateJobs){
 
 #WU-Reboot handler.
     $RebootName = $Results.SystemName
-    $RR_Service = Get-Service -ComputerName $RebootName -Name RemoteRegistry
-    if ($RR_Service.Status -ne 'Running'){
-        sc.exe \\$RebootName config RemoteRegistry start= auto | Out-Null
-        sc.exe \\$RebootName start RemoteRegistry | Out-Null
+    try{
+        $RR_Service = Get-Service -ComputerName $RebootName -Name RemoteRegistry
+        if ($RR_Service.Status -ne 'Running'){
+            sc.exe \\$RebootName config RemoteRegistry start= auto | Out-Null
+            sc.exe \\$RebootName start RemoteRegistry | Out-Null
+        }
+        $RebootCheck = Get-WURebootStatus -ComputerName $RebootName -Silent
+
+        if ($RebootCheck -match "True"){
+            $PendingReboot = "True"
+            Add-Content -Path $LogPaths.RebootListLog -Value "$RebootName"
+            $SystemsToReboot += $RebootName
+        }
+        elseif ($RebootCheck -match "False"){$PendingReboot = "False"}
+        else{$PendingReboot = "Error"}
+    } catch{
+        $PendingReboot = "[Error]Issue with the Remote Registry service"
     }
-    $RebootCheck = Get-WURebootStatus -ComputerName $RebootName -Silent
-    if ($RebootCheck -match "True"){
-        $PendingReboot = "True"
-        Add-Content -Path $LogPaths.RebootListLog -Value "$RebootName"
-    }
-    elseif ($RebootCheck -match "False"){$PendingReboot = "False"}
-    else{$PendingReboot = "Error"}
 
 #Generate result reports.
     Add-Content -Path $LogPaths.UpdateJobLog -Value "-------------------------------------------"
@@ -358,5 +365,7 @@ foreach ($Job in $AllUpdateJobs){
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
     } -ErrorAction SilentlyContinue
 }
-
+if ($SystemsToReboot.count -gt 0){
+    @($SystemsToReboot) | ConvertTo-Json | Set-Content -Path $LogPaths.SavedRebootFile -Force
+}
 Add-Content -Path $LogPaths.UpdateJobLog -Value "Update process completed"
